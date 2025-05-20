@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ray.data._internal.logical.interfaces import LogicalOperator
 from ray.data._internal.planner.exchange.interfaces import ExchangeTaskSpec
@@ -18,7 +18,7 @@ class AbstractAllToAll(LogicalOperator):
         name: str,
         input_op: LogicalOperator,
         num_outputs: Optional[int] = None,
-        sub_progress_bar_names: Optional[List[str]] = None,
+        sub_progress_bar_attributes: Optional[List[Tuple[str, str]]] = None,
         ray_remote_args: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -34,7 +34,7 @@ class AbstractAllToAll(LogicalOperator):
         super().__init__(name, [input_op], num_outputs)
         self._num_outputs = num_outputs
         self._ray_remote_args = ray_remote_args or {}
-        self._sub_progress_bar_names = sub_progress_bar_names
+        self._sub_progress_bar_attributes = sub_progress_bar_attributes
 
 
 class RandomizeBlocks(AbstractAllToAll):
@@ -69,9 +69,9 @@ class RandomShuffle(AbstractAllToAll):
         super().__init__(
             name,
             input_op,
-            sub_progress_bar_names=[
-                ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME,
-                ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME,
+            sub_progress_bar_attributes=[
+                (ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME, "row"),
+                (ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME, "row"),
             ],
             ray_remote_args=ray_remote_args,
         )
@@ -94,19 +94,19 @@ class Repartition(AbstractAllToAll):
         sort: bool = False,
     ):
         if shuffle:
-            sub_progress_bar_names = [
-                ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME,
-                ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME,
+            sub_progress_bar_attributes = [
+                (ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME, "row"),
+                (ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME, "row"),
             ]
         else:
-            sub_progress_bar_names = [
-                ShuffleTaskSpec.SPLIT_REPARTITION_SUB_PROGRESS_BAR_NAME,
+            sub_progress_bar_attributes = [
+                (ShuffleTaskSpec.SPLIT_REPARTITION_SUB_PROGRESS_BAR_NAME, "row"),
             ]
         super().__init__(
             "Repartition",
             input_op,
             num_outputs=num_outputs,
-            sub_progress_bar_names=sub_progress_bar_names,
+            sub_progress_bar_attributes=sub_progress_bar_attributes,
         )
         self._shuffle = shuffle
         self._keys = keys
@@ -129,10 +129,10 @@ class Sort(AbstractAllToAll):
         super().__init__(
             "Sort",
             input_op,
-            sub_progress_bar_names=[
-                SortTaskSpec.SORT_SAMPLE_SUB_PROGRESS_BAR_NAME,
-                ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME,
-                ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME,
+            sub_progress_bar_attributes=[
+                (SortTaskSpec.SORT_SAMPLE_SUB_PROGRESS_BAR_NAME, "row"),
+                (ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME, "row"),
+                (ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME, "row"),
             ],
         )
         self._sort_key = sort_key
@@ -157,10 +157,10 @@ class Aggregate(AbstractAllToAll):
         super().__init__(
             "Aggregate",
             input_op,
-            sub_progress_bar_names=[
-                SortTaskSpec.SORT_SAMPLE_SUB_PROGRESS_BAR_NAME,
-                ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME,
-                ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME,
+            sub_progress_bar_attributes=[
+                (SortTaskSpec.SORT_SAMPLE_SUB_PROGRESS_BAR_NAME, "row"),
+                (ExchangeTaskSpec.MAP_SUB_PROGRESS_BAR_NAME, "row"),
+                (ExchangeTaskSpec.REDUCE_SUB_PROGRESS_BAR_NAME, "row"),
             ],
         )
         self._key = key

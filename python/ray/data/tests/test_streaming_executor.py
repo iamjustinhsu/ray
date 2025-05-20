@@ -866,7 +866,7 @@ def test_create_topology_metadata_with_sub_stages():
     )
 
     # Add fake sub-stages to test the sub-stages feature
-    o2._sub_progress_bar_names = ["SubStage1", "SubStage2"]
+    o2._sub_progress_bar_attributes = [("SubStage1", "row"), ("SubStage2", "row")]
 
     # Create the executor and set up topology
     executor = StreamingExecutor(DataContext.get_current())

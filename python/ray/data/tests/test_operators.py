@@ -122,7 +122,7 @@ def test_all_to_all_operator():
         DataContext.get_current(),
         target_max_block_size=DataContext.get_current().target_max_block_size,
         num_outputs=2,
-        sub_progress_bar_names=["Test1", "Test2"],
+        sub_progress_bar_attributes=[("Test1", "row"), ("Test2", "row")],
         name="TestAll",
     )
 
