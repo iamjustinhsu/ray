@@ -227,7 +227,7 @@ class PhysicalOperator(Operator):
         input_dependencies: List["PhysicalOperator"],
         data_context: DataContext,
         target_max_block_size: Optional[int],
-        sub_progress_bar_attributes: Optional[List[Tuple[str, str]]] = None,
+        sub_progress_bar_names: Optional[List[str]] = None,
     ):
         super().__init__(name, input_dependencies)
 
@@ -243,7 +243,7 @@ class PhysicalOperator(Operator):
         self._estimated_num_output_bundles = None
         self._estimated_output_num_rows = None
         self._execution_finished = False
-        self._sub_progress_bar_attributes = sub_progress_bar_attributes
+        self._sub_progress_bar_names = sub_progress_bar_names
         self._sub_progress_bar_dict: Dict[str, ProgressBar] = None
         # The LogicalOperator(s) which were translated to create this PhysicalOperator.
         # Set via `PhysicalOperator.set_logical_operators()`.
@@ -436,13 +436,13 @@ class PhysicalOperator(Operator):
 
     def initialize_sub_progress_bars(self, position: int) -> int:
         """Initialize all internal sub progress bars, and return the number of bars."""
-        if self._sub_progress_bar_attributes is not None:
+        if self._sub_progress_bar_names is not None:
             self._sub_progress_bar_dict = {}
-            for name, unit in self._sub_progress_bar_attributes:
+            for name in self._sub_progress_bar_names:
                 progress_bar = ProgressBar(
                     name,
                     self.num_output_rows_total() or 1,
-                    unit=unit,
+                    unit="row",
                     position=position,
                 )
                 # NOTE: call `set_description` to trigger the initial print of progress

@@ -1,5 +1,5 @@
 import abc
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from ray.data._internal.execution.interfaces import (
     AllToAllTransformFn,
@@ -59,7 +59,7 @@ class AllToAllOperator(InternalQueueOperatorMixin, PhysicalOperator):
         data_context: DataContext,
         target_max_block_size: Optional[int],
         num_outputs: Optional[int] = None,
-        sub_progress_bar_attributes: Optional[List[Tuple[str, str]]] = None,
+        sub_progress_bar_names: Optional[List[str]] = None,
         name: str = "AllToAll",
     ):
         """Create an AllToAllOperator.
@@ -69,7 +69,7 @@ class AllToAllOperator(InternalQueueOperatorMixin, PhysicalOperator):
                 and a stats dict.
             input_op: Operator generating input data for this op.
             num_outputs: The number of expected output bundles for progress bar.
-            sub_progress_bar_attributes: The names of internal sub progress bars + units
+            sub_progress_bar_names: The names of internal sub progress bars.
             name: The name of this operator.
         """
         self._bulk_fn = bulk_fn
@@ -84,7 +84,7 @@ class AllToAllOperator(InternalQueueOperatorMixin, PhysicalOperator):
             [input_op],
             data_context,
             target_max_block_size,
-            sub_progress_bar_attributes,
+            sub_progress_bar_names,
         )
 
     def num_outputs_total(self) -> Optional[int]:

@@ -169,6 +169,6 @@ def plan_all_to_all_op(
         data_context,
         target_max_block_size=target_max_block_size,
         num_outputs=op._num_outputs,
-        sub_progress_bar_attributes=op._sub_progress_bar_attributes,
+        sub_progress_bar_names=op._sub_progress_bar_names,
         name=op.name,
     )

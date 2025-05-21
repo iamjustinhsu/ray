@@ -383,9 +383,9 @@ class HashShufflingOperatorBase(PhysicalOperator):
             input_dependencies=input_ops,
             data_context=data_context,
             target_max_block_size=None,
-            sub_progress_bar_attributes=[
-                (self.HASH_SHUFFLE_MAP_PROGRESS_BAR_NAME, "row"),
-                (self.HASH_SHUFFLE_REDUCE_PROGRESS_BAR_NAME, "row"),
+            sub_progress_bar_names=[
+                self.HASH_SHUFFLE_MAP_PROGRESS_BAR_NAME,
+                self.HASH_SHUFFLE_REDUCE_PROGRESS_BAR_NAME,
             ],
         )
 
