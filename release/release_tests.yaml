@@ -2897,7 +2897,7 @@
 
   run:
     timeout: 1800
-    script: python experimental/accelerated_dag_gpu_microbenchmark.py
+    script: python experimental/compiled_graph_gpu_microbenchmark.py
 
 - name: compiled_graphs_GPU_multinode
   group: core-daily-test
@@ -2914,7 +2914,7 @@
 
   run:
     timeout: 1800
-    script: python experimental/accelerated_dag_gpu_microbenchmark.py --distributed
+    script: python experimental/compiled_graph_gpu_microbenchmark.py --distributed
 
 - name: benchmark_worker_startup
   group: core-daily-test
@@ -3490,6 +3490,29 @@
     script: python object_store/test_small_objects.py
     wait_for_nodes:
       num_nodes: 5
+
+  variations:
+    - __suffix__: aws
+
+- name: large_objects
+  group: core-scalability-test
+  working_dir: benchmarks
+
+  frequency: nightly
+  team: core
+  env: aws_perf
+  cluster:
+    byod:
+      type: gpu
+      runtime_env:
+        - LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+    cluster_compute: object_store/large_objects.yaml
+
+  run:
+    timeout: 3600
+    script: python object_store/test_large_objects.py
+    wait_for_nodes:
+      num_nodes: 10
 
   variations:
     - __suffix__: aws
@@ -4260,6 +4283,27 @@
     long_running: false
     script: pytest -vs test_llm_serve_correctness.py
 
+- name: llm_serve_integration
+  frequency: nightly
+  python: "3.11"
+  group: llm-serve
+  team: llm
+  working_dir: llm_tests/serve
+
+  cluster:
+    byod:
+      type: llm-cu124
+      runtime_env:
+        - VLLM_USE_V1=1
+    cluster_compute: llm_g5-4xlarge.yaml
+    # NOTE: Important for getting the correct secrets
+    cloud_id: cld_wy5a6nhazplvu32526ams61d98
+    project_id: prj_lhlrf1u5yv8qz9qg3xzw8fkiiq
+  run:
+    timeout: 3600
+    long_running: false
+    script: pytest -vs test_llm_serve_integration.py
+
 
 ##############
 # LLM Batch
@@ -4352,3 +4396,23 @@
       frequency: manual
       cluster:
         cluster_compute: ci/gce.yaml  # relative to working_dir
+
+- name: e2e_audio
+  frequency: weekly
+  python: "3.11"
+  group: ray-examples
+  team: ml
+  working_dir: //doc/source/ray-overview/examples/e2e-audio  # use // to access from repo's root
+
+  cluster:
+    byod:
+      type: llm-cu124
+      post_build_script: byod_e2e_audio.sh
+    cluster_compute: ci/aws.yaml
+
+  run:
+    timeout: 3600
+    script: bash ci/tests.sh
+
+  variations:
+    - __suffix__: aws
