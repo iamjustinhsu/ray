@@ -584,9 +584,9 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
             shuffle_bar.update(i=input_block_metadata.num_rows)
 
             # update finalizing metrics
-            for i, _ in partition_shards_stats.items():
+            for parition_id in range(self._num_partitions):
                 finalize_metrics.on_input_received(out_bundle)
-                finalize_metrics.on_task_submitted(i, out_bundle)
+                finalize_metrics.on_task_submitted(parition_id, out_bundle)
 
         # Update task metrics
         shuffle_metrics.on_task_submitted(

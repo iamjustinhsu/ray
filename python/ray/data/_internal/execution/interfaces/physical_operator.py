@@ -686,8 +686,9 @@ class ContainsSubProgressBars(PhysicalOperator):
         self._sub_progress_bar_names: Optional[List[str]] = sub_progress_bar_names
         self._sub_progress_bar_dict: Optional[Dict[str, ProgressBar]] = None
         self._metric_dict: Dict[str, OpRuntimeMetrics] = {}
-        for name in self._sub_progress_bar_names:
-            self._metric_dict[name] = OpRuntimeMetrics(self)
+        if sub_progress_bar_names is not None:
+            for name in self._sub_progress_bar_names:
+                self._metric_dict[name] = OpRuntimeMetrics(self)
 
     def sub_progress_bar(self, name: str) -> Optional[ProgressBar]:
         """Return the sub progress bar with the given name, or None if not found."""
