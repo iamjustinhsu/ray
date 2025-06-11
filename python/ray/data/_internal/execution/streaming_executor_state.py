@@ -19,6 +19,7 @@ from ray.data._internal.execution.interfaces import (
     RefBundle,
 )
 from ray.data._internal.execution.interfaces.physical_operator import (
+    ContainsSubProgressBars,
     DataOpTask,
     MetadataOpTask,
     OpTask,
@@ -208,7 +209,7 @@ class OpState:
         progress_bar_enabled = (
             ctx.enable_progress_bars
             and ctx.enable_operator_progress_bars
-            and verbose_progress
+            and (isinstance(self.op, ContainsSubProgressBars) or verbose_progress)
         )
         self.progress_bar = ProgressBar(
             "- " + self.op.name,
@@ -218,17 +219,19 @@ class OpState:
             enabled=progress_bar_enabled,
         )
         num_progress_bars = 1
-
-        # Initialize must be called for sub progress bars, even the
-        # bars are not enabled via the DataContext.
-        num_progress_bars += self.op.initialize_sub_progress_bars(index + 1)
+        if isinstance(self.op, ContainsSubProgressBars):
+            # Initialize must be called for sub progress bars, even the
+            # bars are not enabled via the DataContext.
+            num_progress_bars += self.op.initialize_sub_progress_bars(index + 1)
         return num_progress_bars if progress_bar_enabled else 0
 
     def close_progress_bars(self):
         """Close all progress bars for this operator."""
         if self.progress_bar:
             self.progress_bar.close()
-            self.op.close_sub_progress_bars()
+            if isinstance(self.op, ContainsSubProgressBars):
+                # Close all sub progress bars.
+                self.op.close_sub_progress_bars()
 
     def total_enqueued_input_bundles(self) -> int:
         """Total number of input bundles currently enqueued among:

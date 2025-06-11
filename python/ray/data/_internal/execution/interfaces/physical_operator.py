@@ -227,7 +227,6 @@ class PhysicalOperator(Operator):
         input_dependencies: List["PhysicalOperator"],
         data_context: DataContext,
         target_max_block_size: Optional[int],
-        sub_progress_bar_names: Optional[List[str]] = None,
     ):
         super().__init__(name, input_dependencies)
 
@@ -243,8 +242,6 @@ class PhysicalOperator(Operator):
         self._estimated_num_output_bundles = None
         self._estimated_output_num_rows = None
         self._execution_finished = False
-        self._sub_progress_bar_names = sub_progress_bar_names
-        self._sub_progress_bar_dict: Dict[str, ProgressBar] = None
         # The LogicalOperator(s) which were translated to create this PhysicalOperator.
         # Set via `PhysicalOperator.set_logical_operators()`.
         self._logical_operators: List[LogicalOperator] = []
@@ -409,65 +406,6 @@ class PhysicalOperator(Operator):
         ``self._estimated_output_num_rows`` appropriately.
         """
         return self._estimated_output_num_rows
-
-    def update_output_stats(self, num_tasks_submitted_so_far: int) -> None:
-        """Recalcuates the estimated number of output bundles and output rows
-        computed so far. This function should be used when we cannot natively
-        infer the number of outputs, such as in hash shuffling or map operators
-
-        The value returned may be an estimate based off the consumption so far.
-        This is useful for reporting progress.
-        """
-
-        upstream_op_num_outputs = sum(
-            op.num_outputs_total() or 0 for op in self.input_dependencies
-        )
-        if (
-            upstream_op_num_outputs > 0
-            and self._metrics.num_inputs_received > 0
-            and self._metrics.num_tasks_finished > 0
-        ):
-            estimated_num_tasks_so_far = (
-                upstream_op_num_outputs
-                / self._metrics.num_inputs_received
-                * num_tasks_submitted_so_far
-            )
-            self._estimated_num_output_bundles = round(
-                estimated_num_tasks_so_far
-                * self._metrics.num_outputs_of_finished_tasks
-                / self._metrics.num_tasks_finished
-            )
-            self._estimated_output_num_rows = round(
-                estimated_num_tasks_so_far
-                * self._metrics.rows_task_outputs_generated
-                / self._metrics.num_tasks_finished
-            )
-
-    def initialize_sub_progress_bars(self, position: int) -> int:
-        """Initialize all internal sub progress bars, and return the number of bars."""
-        if self._sub_progress_bar_names is not None:
-            self._sub_progress_bar_dict = {}
-            for name in self._sub_progress_bar_names:
-                progress_bar = ProgressBar(
-                    name,
-                    self.num_output_rows_total() or 1,
-                    unit="row",
-                    position=position,
-                )
-                # NOTE: call `set_description` to trigger the initial print of progress
-                # bar on console.
-                progress_bar.set_description(f"  *- {name}")
-                self._sub_progress_bar_dict[name] = progress_bar
-                position += 1
-            return len(self._sub_progress_bar_dict)
-        else:
-            return 0
-
-    def close_sub_progress_bars(self):
-        """Close all internal sub progress bars."""
-        if self._sub_progress_bar_dict is not None:
-            for sub_bar in self._sub_progress_bar_dict.values():
-                sub_bar.close()
 
     def start(self, options: ExecutionOptions) -> None:
         """Called by the executor when execution starts for an operator.
@@ -727,9 +665,104 @@ class PhysicalOperator(Operator):
                     # In all cases, we swallow the exception.
                     pass
 
+    def upstream_op_num_outputs(self):
+        upstream_op_num_outputs = sum(
+            op.num_outputs_total() or 0 for op in self.input_dependencies
+        )
+        return upstream_op_num_outputs
+
 
 class ReportsExtraResourceUsage(abc.ABC):
     @abc.abstractmethod
     def extra_resource_usage(self: PhysicalOperator) -> ExecutionResources:
         """Returns resources used by this operator beyond standard accounting."""
         ...
+
+
+class ContainsSubProgressBars(PhysicalOperator):
+    def __init__(self, *args, sub_progress_bar_names: Optional[List[str]], **kwargs):
+        """Initialize the sub progress bar mixin."""
+        super().__init__(*args, **kwargs)
+        self._sub_progress_bar_names: Optional[List[str]] = sub_progress_bar_names
+        self._sub_progress_bar_dict: Optional[Dict[str, ProgressBar]] = None
+        self._metric_dict: Dict[str, OpRuntimeMetrics] = {}
+        for name in self._sub_progress_bar_names:
+            self._metric_dict[name] = OpRuntimeMetrics(self)
+
+    def sub_progress_bar(self, name: str) -> Optional[ProgressBar]:
+        """Return the sub progress bar with the given name, or None if not found."""
+        if self._sub_progress_bar_dict is not None:
+            return self._sub_progress_bar_dict.get(name)
+        return None
+
+    def get_metrics(self, name: str) -> Optional[OpRuntimeMetrics]:
+        return self._metric_dict.get(name)
+
+    def initialize_sub_progress_bars(self, position: int) -> int:
+        """Initialize all internal sub progress bars, and return the number of bars."""
+        if self._sub_progress_bar_names is not None:
+            self._sub_progress_bar_dict = {}
+            for name in self._sub_progress_bar_names:
+                progress_bar = ProgressBar(
+                    name,
+                    self.num_output_rows_total() or 1,
+                    unit="row",
+                    position=position,
+                )
+                # NOTE: call `set_description` to trigger the initial print of progress
+                # bar on console.
+                progress_bar.set_description(f"  *- {name}")
+                self._sub_progress_bar_dict[name] = progress_bar
+                position += 1
+            return len(self._sub_progress_bar_dict)
+        else:
+            return 0
+
+    def close_sub_progress_bars(self):
+        """Close all internal sub progress bars."""
+        if self._sub_progress_bar_dict is not None:
+            for sub_bar in self._sub_progress_bar_dict.values():
+                sub_bar.close()
+
+
+def update_task_output_stats(
+    num_tasks_submitted: int,
+    upstream_op_num_outputs: int,
+    metrics: OpRuntimeMetrics,
+    total_num_tasks: Optional[int] = None,
+) -> Tuple[int, int, int]:
+    """This method is trying to estimate total number of blocks/rows based on
+    - How many outputs produced by the input deps
+    - How many blocks/rows produced by tasks of this operator
+    """
+
+    if (
+        upstream_op_num_outputs > 0
+        and metrics.num_inputs_received > 0
+        and metrics.num_tasks_finished > 0
+    ):
+        estimated_num_tasks = total_num_tasks
+        if estimated_num_tasks is None:
+            estimated_num_tasks = (
+                upstream_op_num_outputs
+                / metrics.num_inputs_received
+                * num_tasks_submitted
+            )
+
+        estimated_num_output_bundles = round(
+            estimated_num_tasks
+            * metrics.num_outputs_of_finished_tasks
+            / metrics.num_tasks_finished
+        )
+        estimated_output_num_rows = round(
+            estimated_num_tasks
+            * metrics.rows_task_outputs_generated
+            / metrics.num_tasks_finished
+        )
+        return (
+            estimated_num_tasks,
+            estimated_num_output_bundles,
+            estimated_output_num_rows,
+        )
+
+    return (0, 0, 0)

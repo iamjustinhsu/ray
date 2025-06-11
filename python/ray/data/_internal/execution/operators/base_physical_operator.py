@@ -7,6 +7,9 @@ from ray.data._internal.execution.interfaces import (
     RefBundle,
     TaskContext,
 )
+from ray.data._internal.execution.interfaces.physical_operator import (
+    ContainsSubProgressBars,
+)
 from ray.data._internal.logical.interfaces import LogicalOperator
 from ray.data._internal.stats import StatsDict
 from ray.data.context import DataContext
@@ -46,7 +49,9 @@ class OneToOneOperator(PhysicalOperator):
         return self.input_dependencies[0]
 
 
-class AllToAllOperator(InternalQueueOperatorMixin, PhysicalOperator):
+class AllToAllOperator(
+    InternalQueueOperatorMixin, ContainsSubProgressBars, PhysicalOperator
+):
     """A blocking operator that executes once its inputs are complete.
 
     This operator implements distributed sort / shuffle operations, etc.
@@ -84,7 +89,7 @@ class AllToAllOperator(InternalQueueOperatorMixin, PhysicalOperator):
             [input_op],
             data_context,
             target_max_block_size,
-            sub_progress_bar_names,
+            sub_progress_bar_names=sub_progress_bar_names,
         )
 
     def num_outputs_total(self) -> Optional[int]:

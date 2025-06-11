@@ -31,6 +31,7 @@ from ray.data._internal.execution.interfaces import (
     PhysicalOperator,
     RefBundle,
     TaskContext,
+    update_task_output_stats,
 )
 from ray.data._internal.execution.interfaces.physical_operator import (
     DataOpTask,
@@ -395,7 +396,13 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
 
             # Estimate number of tasks and rows from inputs received and tasks
             # submitted so far
-            self.update_output_stats(self._next_data_task_idx)
+            (
+                _,
+                self._estimated_num_output_bundles,
+                self._estimated_output_num_rows,
+            ) = update_task_output_stats(
+                self._next_data_task_idx, self.upstream_op_num_outputs(), self._metrics
+            )
 
             self._data_tasks.pop(task_index)
             # Notify output queue that this task is complete.
