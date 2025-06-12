@@ -34,6 +34,7 @@ from ray.data._internal.arrow_ops.transform_pyarrow import (
 from ray.data._internal.execution.interfaces import (
     PhysicalOperator,
     RefBundle,
+    update_task_output_stats,
 )
 from ray.data._internal.execution.interfaces.physical_operator import (
     ContainsSubProgressBars,
@@ -381,11 +382,12 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
         shuffle_progress_bar_name: Optional[str] = None,
         finalize_progress_bar_name: Optional[str] = None,
     ):
-
-        if shuffle_progress_bar_name is None:
-            shuffle_progress_bar_name = "Hash Shuffle Map"
-        if finalize_progress_bar_name is None:
-            finalize_progress_bar_name = "Hash Shuffle Reduce"
+        self._shuffle_progress_bar_name = (
+            shuffle_progress_bar_name or "Hash Shuffle Map"
+        )
+        self._finalize_progress_bar_name = (
+            finalize_progress_bar_name or "Hash Shuffle Reduce"
+        )
 
         super().__init__(
             name=name,
@@ -393,8 +395,8 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
             data_context=data_context,
             target_max_block_size=None,
             sub_progress_bar_names=[
-                shuffle_progress_bar_name,
-                finalize_progress_bar_name,
+                self._shuffle_progress_bar_name,
+                self._finalize_progress_bar_name,
             ],
         )
 
@@ -475,15 +477,19 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
         self._aggregator_pool.start()
 
     def _add_input_inner(self, input_bundle: RefBundle, input_index: int) -> None:
+        # TODO move to base class
+        shuffle_metrics = self.get_metrics(self._shuffle_progress_bar_name)
+        shuffle_metrics.on_input_received(input_bundle)
+        shuffle_metrics.on_input_queued(input_bundle)
         try:
             self._do_add_input_inner(input_bundle, input_index)
         finally:
-            pass
+            shuffle_metrics.on_input_dequeued(input_bundle)
+            shuffle_metrics.on_output_taken(input_bundle)
 
     def _do_add_input_inner(self, input_bundle: RefBundle, input_index: int):
         input_blocks_refs: List[ObjectRef[Block]] = input_bundle.block_refs
         input_blocks_metadata: List[BlockMetadata] = input_bundle.metadata
-
         for block_ref, block_metadata in zip(input_blocks_refs, input_blocks_metadata):
             # If operator hasn't propagated schemas (for this sequence) to its
             # aggregator pool, it will need to do that upon receiving of the
@@ -527,40 +533,71 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
                 send_empty_blocks=should_broadcast_schemas,
                 override_partition_id=override_partition_id,
             )
-
             if should_broadcast_schemas:
                 self._has_schemas_broadcasted[input_index] = True
 
-            def _on_partitioning_done():
-                task = self._shuffling_tasks[input_index].pop(cur_shuffle_task_idx)
-                # Fetch input block and resulting partition shards block metadata and
-                # handle obtained metadata
-                #
-                # NOTE: We set timeout equal to 1m here as an upper-bound to make
-                #       sure that `ray.get(...)` invocation couldn't stall the pipeline
-                #       indefinitely
-                input_block_metadata, partition_shards_stats = ray.get(
-                    task.get_waitable(), timeout=60
-                )
+            self._add_shuffling_task_inner(
+                input_index,
+                cur_shuffle_task_idx,
+                input_block_partition_shards_metadata_tuple_ref,
+                shuffle_task_resource_bundle,
+                block_ref,
+                block_metadata,
+            )
 
-                self._handle_shuffled_block_metadata(
-                    input_index, input_block_metadata, partition_shards_stats
-                )
+    def _add_shuffling_task_inner(
+        self,
+        input_index: int,
+        cur_shuffle_task_idx: int,
+        shard_ref: "ObjectRef[Tuple[BlockMetadata, Dict[int, _PartitionStats]]]",
+        shuffle_task_resource_bundle: Dict[int, str],
+        block_ref: "ObjectRef[Block]",
+        block_metadata: BlockMetadata,
+    ):
+        shuffle_metrics = self.get_metrics(self._shuffle_progress_bar_name)
+        shuffle_bar = self.sub_progress_bar(self._shuffle_progress_bar_name)
 
-                # For metrics purposes, creating a ref bundle
-                blocks = [(task.get_waitable(), input_block_metadata)]
-                out_bundle = RefBundle(blocks, owns_blocks=False)
+        finalize_metrics = self.get_metrics(self._finalize_progress_bar_name)
 
-                self._on_post_task(
-                    0, cur_shuffle_task_idx, out_bundle, estimate_total=False
-                )
+        def _on_partitioning_done():
+            task = self._shuffling_tasks[input_index].pop(cur_shuffle_task_idx)
+            # Fetch input block and resulting partition shards block metadata and
+            # handle obtained metadata
+            #
+            # NOTE: We set timeout equal to 1m here as an upper-bound to make
+            #       sure that `ray.get(...)` invocation couldn't stall the pipeline
+            #       indefinitely
+            input_block_metadata, partition_shards_stats = ray.get(
+                task.get_waitable(), timeout=60
+            )
 
-        ref = RefBundle([(block_ref, block_metadata)], owns_blocks=False)
-        self._on_pre_task(0, ref, cur_shuffle_task_idx, estimate_total=False)
+            self._handle_shuffled_block_metadata(
+                input_index, input_block_metadata, partition_shards_stats
+            )
+
+            # Update task metrics
+            blocks = [(shard_ref, input_block_metadata)]
+            out_bundle = RefBundle(blocks, owns_blocks=False)
+            shuffle_metrics.on_task_output_generated(cur_shuffle_task_idx, out_bundle)
+            shuffle_metrics.on_task_finished(cur_shuffle_task_idx, None)
+
+            shuffle_bar.update(i=input_block_metadata.num_rows)
+
+            # update finalizing metrics
+            for parition_id in range(self._num_partitions):
+                finalize_metrics.on_input_received(out_bundle)
+                finalize_metrics.on_task_submitted(parition_id, out_bundle)
+
+        # Update task metrics
+        shuffle_metrics.on_task_submitted(
+            cur_shuffle_task_idx,
+            RefBundle([(block_ref, block_metadata)], owns_blocks=False),
+        )
+        shuffle_bar.update(total=shuffle_metrics.num_row_inputs_received)
 
         self._shuffling_tasks[input_index][cur_shuffle_task_idx] = MetadataOpTask(
             task_index=cur_shuffle_task_idx,
-            object_ref=input_block_partition_shards_metadata_tuple_ref,
+            object_ref=shard_ref,
             task_done_callback=_on_partitioning_done,
             task_resource_bundle=(
                 ExecutionResources.from_resource_dict(shuffle_task_resource_bundle)
@@ -573,6 +610,12 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
 
     def _get_next_inner(self) -> RefBundle:
         bundle: RefBundle = self._output_queue.popleft()
+
+        # TODO move to base class
+        finalize_metrics = self.get_metrics(self._finalize_progress_bar_name)
+        finalize_metrics.on_output_dequeued(bundle)
+        finalize_metrics.on_output_taken(bundle)
+
         self._output_blocks_stats.extend(to_stats(bundle.metadata))
 
         return bundle
@@ -619,23 +662,6 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
             f"Scheduling next shuffling finalization batch (last finalized "
             f"partition id is {self._last_finalized_partition_id})"
         )
-
-        def _on_bundle_ready(task_index: int, bundle: RefBundle):
-            # Add finalized block to the output queue
-            self._output_queue.append(bundle)
-            finalize_metrics.on_output_queued(bundle)
-            self._on_post_task(1, task_index, bundle, num_tasks=self._num_partitions)
-
-        def _on_aggregation_done(partition_id: int, exc: Optional[Exception]):
-            if partition_id in self._finalizing_tasks:
-                self._finalizing_tasks.pop(partition_id)
-
-                if exc:
-                    logger.error(
-                        f"Aggregation of the {partition_id} partition "
-                        f"failed with: {exc}",
-                        exc_info=exc,
-                    )
 
         # NOTE: Unless explicitly set finalization batch size defaults to the #
         #       of shuffle aggregators
@@ -701,25 +727,68 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
                 **finalize_task_resource_bundle
             ).remote(partition_id)
 
-            # Update metrics/pb finalizing tasks
-            self._on_pre_task(1, RefBundle([], owns_blocks=False), partition_id)
-            finalize_metrics = self.get_metrics(1)
-
-            self._finalizing_tasks[partition_id] = DataOpTask(
-                task_index=partition_id,
-                streaming_gen=block_gen,
-                output_ready_callback=functools.partial(_on_bundle_ready, partition_id),
-                # TODO fix to pass in task_id into the callback
-                task_done_callback=functools.partial(
-                    _on_aggregation_done, partition_id
-                ),
-                task_resource_bundle=(
-                    ExecutionResources.from_resource_dict(finalize_task_resource_bundle)
-                ),
+            self._add_finalize_task_inner(
+                partition_id, block_gen, finalize_task_resource_bundle
             )
 
         # Update last finalized partition id
         self._last_finalized_partition_id = max(target_partition_ids)
+
+    def _add_finalize_task_inner(
+        self,
+        partition_id: int,
+        block_gen: Any,
+        finalize_task_resource_bundle: Dict[str, int],
+    ):
+        finalize_metrics = self.get_metrics(self._finalize_progress_bar_name)
+        finalize_bar = self.sub_progress_bar(self._finalize_progress_bar_name)
+
+        def _on_bundle_ready(task_index: int, bundle: RefBundle):
+            # Add finalized block to the output queue
+            self._output_queue.append(bundle)
+
+            finalize_metrics.on_task_output_generated(
+                task_index=task_index, output=bundle
+            )
+
+            finalize_metrics.on_task_finished(task_index=task_index, exception=None)
+            finalize_metrics.on_output_queued(bundle)
+
+            (
+                _,
+                self._estimated_num_output_bundles,
+                self._estimated_output_num_rows,
+            ) = update_task_output_stats(
+                task_index + 1,
+                self.upstream_op_num_outputs(),
+                finalize_metrics,
+                total_num_tasks=self._num_partitions,
+            )
+            finalize_bar.update(i=bundle.num_rows(), total=self.num_output_rows_total())
+
+        def _on_aggregation_done(partition_id: int, exc: Optional[Exception]):
+            if partition_id in self._finalizing_tasks:
+                self._finalizing_tasks.pop(partition_id)
+
+                if exc:
+                    logger.error(
+                        f"Aggregation of the {partition_id} partition "
+                        f"failed with: {exc}",
+                        exc_info=exc,
+                    )
+
+        self._finalizing_tasks[partition_id] = DataOpTask(
+            task_index=partition_id,
+            streaming_gen=block_gen,
+            output_ready_callback=lambda output: _on_bundle_ready(partition_id, output),
+            # TODO fix to pass in task_id into the callback
+            task_done_callback=functools.partial(_on_aggregation_done, partition_id),
+            task_resource_bundle=(
+                ExecutionResources.from_resource_dict(finalize_task_resource_bundle)
+            ),
+        )
+
+        finalize_bar.update(total=self.num_output_rows_total())
 
     def _do_shutdown(self, force: bool = False) -> None:
         self._aggregator_pool.shutdown(force=True)
@@ -734,8 +803,10 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
         shuffle_name = f"{self._name}_shuffle"
         finalize_name = f"{self._name}_finalize"
 
-        shuffle_metrics = self.get_metrics(0)
-        finalize_metrics = self.get_metrics(1)
+        shuffle_metrics = self.get_metrics(self._shuffle_progress_bar_name)
+        finalize_metrics = self.get_metrics(self._finalize_progress_bar_name)
+
+        shuffle_metrics.as_dict()
 
         return {
             shuffle_name: shuffle_metrics.as_dict(),

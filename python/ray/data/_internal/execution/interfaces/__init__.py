@@ -1,7 +1,11 @@
 from .common import NodeIdStr
 from .execution_options import ExecutionOptions, ExecutionResources
 from .executor import Executor, OutputIterator
-from .physical_operator import PhysicalOperator, ReportsExtraResourceUsage
+from .physical_operator import (
+    PhysicalOperator,
+    ReportsExtraResourceUsage,
+    update_task_output_stats,
+)
 from .ref_bundle import RefBundle
 from .task_context import TaskContext
 from .transform_fn import AllToAllTransformFn
@@ -17,4 +21,5 @@ __all__ = [
     "RefBundle",
     "ReportsExtraResourceUsage",
     "TaskContext",
+    "update_task_output_stats",
 ]

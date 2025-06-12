@@ -31,12 +31,12 @@ from ray.data._internal.execution.interfaces import (
     PhysicalOperator,
     RefBundle,
     TaskContext,
+    update_task_output_stats,
 )
 from ray.data._internal.execution.interfaces.physical_operator import (
     DataOpTask,
     MetadataOpTask,
     OpTask,
-    update_task_output_stats,
 )
 from ray.data._internal.execution.operators.base_physical_operator import (
     InternalQueueOperatorMixin,
@@ -304,6 +304,7 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
 
         # Add RefBundle to the bundler.
         self._block_ref_bundler.add_bundle(refs)
+        self._metrics.on_input_queued(refs)
 
         if self._block_ref_bundler.has_bundle():
             # The ref bundler combines one or more RefBundles into a new larger
@@ -450,6 +451,7 @@ class MapOperator(OneToOneOperator, InternalQueueOperatorMixin, ABC):
     def _get_next_inner(self) -> RefBundle:
         assert self._started
         bundle = self._output_queue.get_next()
+        self._metrics.on_output_dequeued(bundle)
         self._output_blocks_stats.extend(to_stats(bundle.metadata))
         return bundle
 
