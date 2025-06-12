@@ -690,14 +690,22 @@ class ContainsSubProgressBars(PhysicalOperator):
             for name in self._sub_progress_bar_names:
                 self._metric_dict[name] = OpRuntimeMetrics(self)
 
-    def sub_progress_bar(self, name: str) -> Optional[ProgressBar]:
+    def _key(self, key: Union[str, int]) -> str:
+        """Convert the key to a string."""
+        if isinstance(key, int):
+            return self._sub_progress_bar_names[key]
+        return key
+
+    def sub_progress_bar(self, key: Union[str, int]) -> Optional[ProgressBar]:
         """Return the sub progress bar with the given name, or None if not found."""
         if self._sub_progress_bar_dict is not None:
-            return self._sub_progress_bar_dict.get(name)
+            key = self._key(key)
+            return self._sub_progress_bar_dict.get(key)
         return None
 
-    def get_metrics(self, name: str) -> Optional[OpRuntimeMetrics]:
-        return self._metric_dict.get(name)
+    def get_metrics(self, key: Union[str, int]) -> Optional[OpRuntimeMetrics]:
+        key = self._key(key)
+        return self._metric_dict.get(key)
 
     def initialize_sub_progress_bars(self, position: int) -> int:
         """Initialize all internal sub progress bars, and return the number of bars."""
@@ -724,6 +732,53 @@ class ContainsSubProgressBars(PhysicalOperator):
         if self._sub_progress_bar_dict is not None:
             for sub_bar in self._sub_progress_bar_dict.values():
                 sub_bar.close()
+
+    def _on_pre_task(
+        self,
+        key: Union[str, int],
+        ref: RefBundle,
+        task_idx: int,
+        estimate_total: bool = True,
+    ):
+        metrics = self.get_metrics(key)
+        metrics.on_task_submitted(task_idx, ref)
+
+        pb_bar = self.sub_progress_bar(key)
+        if estimate_total:
+            pb_bar.update(total=self.num_output_rows_total())
+        else:
+            pb_bar.update(total=self._metrics.num_row_inputs_received)
+
+    def _on_post_task(
+        self,
+        key: Union[str, int],
+        task_idx,
+        ref: RefBundle,
+        estimate_total: bool = True,
+        num_tasks: Optional[int] = None,
+    ):
+        metrics = self.get_metrics(key)
+        metrics.on_task_output_generated(task_idx, ref)
+        metrics.on_task_finished(task_idx, None)
+
+        pb_bar = self.sub_progress_bar(key)
+
+        # for finalize tasks, we do not know the output length,
+        # so we must estimate it with `update_task_output_stats`
+        if estimate_total:
+            (
+                _,
+                self._estimated_num_output_bundles,
+                self._estimated_output_num_rows,
+            ) = update_task_output_stats(
+                task_idx + 1,
+                self.upstream_op_num_outputs(),
+                metrics,
+                total_num_tasks=num_tasks,
+            )
+            pb_bar.update(i=ref.num_rows(), total=self.num_output_rows_total())
+        else:
+            pb_bar.update(i=ref.num_rows(), total=self._metrics.num_row_inputs_received)
 
 
 def update_task_output_stats(
