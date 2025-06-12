@@ -475,10 +475,13 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
         self._aggregator_pool.start()
 
     def _add_input_inner(self, input_bundle: RefBundle, input_index: int) -> None:
+        # TODO move to base class
+        shuffle_metrics = self.get_metrics(0)
+        shuffle_metrics.on_input_queued(input_bundle)
         try:
             self._do_add_input_inner(input_bundle, input_index)
         finally:
-            pass
+            shuffle_metrics.on_input_dequeued(input_bundle)
 
     def _do_add_input_inner(self, input_bundle: RefBundle, input_index: int):
         input_blocks_refs: List[ObjectRef[Block]] = input_bundle.block_refs
@@ -573,6 +576,11 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
 
     def _get_next_inner(self) -> RefBundle:
         bundle: RefBundle = self._output_queue.popleft()
+
+        # TODO move to base class
+        finalize_metrics = self.get_metrics(1)
+        finalize_metrics.on_output_dequeued(bundle)
+
         self._output_blocks_stats.extend(to_stats(bundle.metadata))
 
         return bundle

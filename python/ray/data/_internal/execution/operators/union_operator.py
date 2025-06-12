@@ -81,10 +81,10 @@ class UnionOperator(InternalQueueOperatorMixin, NAryOperator):
 
         if not self._preserve_order:
             self._output_buffer.append(refs)
-            self._metrics.on_input_dequeued(refs)
             self._metrics.on_output_queued(refs)
         else:
             self._input_buffers[input_index].append(refs)
+            self._metrics.on_input_queued(refs)
 
     def all_inputs_done(self) -> None:
         super().all_inputs_done()
@@ -106,6 +106,7 @@ class UnionOperator(InternalQueueOperatorMixin, NAryOperator):
 
     def _get_next_inner(self) -> RefBundle:
         refs = self._output_buffer.popleft()
+        self._metrics.on_output_dequeued(refs)
         return refs
 
     def get_stats(self) -> StatsDict:
