@@ -108,7 +108,6 @@ class OutputSplitter(InternalQueueOperatorMixin, PhysicalOperator):
 
     def _get_next_inner(self) -> RefBundle:
         output = self._output_queue.popleft()
-        self._metrics.on_output_dequeued(output)
         return output
 
     def get_stats(self) -> StatsDict:
@@ -125,7 +124,6 @@ class OutputSplitter(InternalQueueOperatorMixin, PhysicalOperator):
         if bundle.num_rows() is None:
             raise ValueError("OutputSplitter requires bundles with known row count")
         self._buffer.append(bundle)
-        self._metrics.on_input_queued(bundle)
         self._dispatch_bundles()
 
     def all_inputs_done(self) -> None:

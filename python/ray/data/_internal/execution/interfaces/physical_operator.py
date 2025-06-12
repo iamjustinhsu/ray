@@ -665,11 +665,11 @@ class PhysicalOperator(Operator):
                     # In all cases, we swallow the exception.
                     pass
 
-    def upstream_num_outputs(self):
-        upstream_num_outputs = sum(
+    def upstream_op_num_outputs(self):
+        upstream_op_num_outputs = sum(
             op.num_outputs_total() or 0 for op in self.input_dependencies
         )
-        return upstream_num_outputs
+        return upstream_op_num_outputs
 
 
 class ReportsExtraResourceUsage(abc.ABC):
@@ -763,7 +763,7 @@ class ContainsSubProgressBars(PhysicalOperator):
 
         pb_bar = self.sub_progress_bar(key)
 
-        # for some tasks, we do not know the output length,
+        # for finalize tasks, we do not know the output length,
         # so we must estimate it with `update_task_output_stats`
         if estimate_total:
             (
@@ -772,7 +772,7 @@ class ContainsSubProgressBars(PhysicalOperator):
                 self._estimated_output_num_rows,
             ) = update_task_output_stats(
                 task_idx + 1,
-                self.upstream_num_outputs(),
+                self.upstream_op_num_outputs(),
                 metrics,
                 total_num_tasks=num_tasks,
             )

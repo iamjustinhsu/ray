@@ -80,10 +80,8 @@ class ZipOperator(InternalQueueOperatorMixin, PhysicalOperator):
         assert input_index == 0 or input_index == 1, input_index
         if input_index == 0:
             self._left_buffer.append(refs)
-            self._metrics.on_input_queued(refs)
         else:
             self._right_buffer.append(refs)
-            self._metrics.on_input_queued(refs)
 
     def all_inputs_done(self) -> None:
         self._output_buffer, self._stats = self._zip(

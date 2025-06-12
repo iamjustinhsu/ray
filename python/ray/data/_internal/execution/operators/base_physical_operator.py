@@ -21,6 +21,24 @@ class InternalQueueOperatorMixin(PhysicalOperator, abc.ABC):
         """Returns Operator's internal queue size"""
         ...
 
+    def add_input(self, refs: RefBundle, input_index: int) -> None:
+        # Overrides PhysicalOperator.get_next to update metrics
+        assert 0 <= input_index < len(self._input_dependencies), (
+            f"Input index out of bounds (total inputs {len(self._input_dependencies)}, "
+            f"index is {input_index})"
+        )
+
+        self._metrics.on_input_received(refs)
+        self._metrics.on_input_queued(refs)
+        self._add_input_inner(refs, input_index)
+
+    def get_next(self) -> RefBundle:
+        # Overrides PhysicalOperator.get_next to update metrics
+        output = self._get_next_inner()
+        self._metrics.on_output_taken(output)
+        self._metrics.on_output_dequeued(output)
+        return output
+
 
 class OneToOneOperator(PhysicalOperator):
     """An operator that has one input and one output dependency.
@@ -110,7 +128,6 @@ class AllToAllOperator(
         assert not self.completed()
         assert input_index == 0, input_index
         self._input_buffer.append(refs)
-        self._metrics.on_input_queued(refs)
 
     def internal_queue_size(self) -> int:
         return len(self._input_buffer)
@@ -142,7 +159,6 @@ class AllToAllOperator(
 
     def _get_next_inner(self) -> RefBundle:
         bundle = self._output_buffer.pop(0)
-        self._metrics.on_output_dequeued(bundle)
         self._output_rows += bundle.num_rows()
         return bundle
 
