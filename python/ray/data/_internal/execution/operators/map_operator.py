@@ -31,12 +31,12 @@ from ray.data._internal.execution.interfaces import (
     PhysicalOperator,
     RefBundle,
     TaskContext,
-    update_task_output_stats,
 )
 from ray.data._internal.execution.interfaces.physical_operator import (
     DataOpTask,
     MetadataOpTask,
     OpTask,
+    update_task_output_stats,
 )
 from ray.data._internal.execution.operators.base_physical_operator import (
     InternalQueueOperatorMixin,

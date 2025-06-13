@@ -690,14 +690,22 @@ class ContainsSubProgressBars(PhysicalOperator):
             for name in self._sub_progress_bar_names:
                 self._metric_dict[name] = OpRuntimeMetrics(self)
 
-    def sub_progress_bar(self, name: str) -> Optional[ProgressBar]:
+    def _key(self, key: Union[str, int]) -> str:
+        """Convert the key to a string."""
+        if isinstance(key, int):
+            return self._sub_progress_bar_names[key]
+        return key
+
+    def sub_progress_bar(self, key: Union[str, int]) -> Optional[ProgressBar]:
         """Return the sub progress bar with the given name, or None if not found."""
         if self._sub_progress_bar_dict is not None:
-            return self._sub_progress_bar_dict.get(name)
+            key = self._key(key)
+            return self._sub_progress_bar_dict.get(key)
         return None
 
-    def get_metrics(self, name: str) -> Optional[OpRuntimeMetrics]:
-        return self._metric_dict.get(name)
+    def get_metrics(self, key: Union[str, int]) -> Optional[OpRuntimeMetrics]:
+        key = self._key(key)
+        return self._metric_dict.get(key)
 
     def initialize_sub_progress_bars(self, position: int) -> int:
         """Initialize all internal sub progress bars, and return the number of bars."""
