@@ -480,8 +480,6 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
         shuffle_metrics = self.get_metrics(0)
         shuffle_bar = self.sub_progress_bar(0)
 
-        finalize_metrics = self.get_metrics(1)
-
         # TODO move to base class
         shuffle_metrics.on_input_received(input_bundle)
         shuffle_metrics.on_input_queued(input_bundle)
@@ -513,22 +511,6 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
 
             # Update Shuffle progress bar
             shuffle_bar.update(i=input_block_metadata.num_rows)
-
-            # Update Finalize Metrics on task submission
-            for partition_id in range(self._num_partitions):
-                stats = partition_shards_stats.get(partition_id, _PartitionStats(0, 0))
-                bm = BlockMetadata(
-                    num_rows=stats.num_rows,
-                    size_bytes=stats.byte_size,
-                    schema=None,
-                    input_files=None,
-                    exec_stats=None,
-                )
-                out_bundle = RefBundle([(task.get_waitable(), bm)], owns_blocks=False)
-                finalize_task_idx = (
-                    cur_shuffle_task_idx * self._num_partitions + partition_id
-                )
-                finalize_metrics.on_task_submitted(finalize_task_idx, out_bundle)
 
         for block_ref, block_metadata in zip(input_blocks_refs, input_blocks_metadata):
 
@@ -732,14 +714,10 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
 
             # Update Finalize Metrics on task output generated
             finalize_metrics.on_output_queued(bundle)
-            for i in range(self._next_shuffle_tasks_idx):
-                finalize_task_idx = i * self._num_partitions + partition_id
-                finalize_metrics.on_task_output_generated(
-                    task_index=finalize_task_idx, output=bundle
-                )
-                finalize_metrics.on_task_finished(
-                    task_index=finalize_task_idx, exception=None
-                )
+            finalize_metrics.on_task_output_generated(
+                task_index=partition_id, output=bundle
+            )
+            finalize_metrics.on_task_finished(task_index=partition_id, exception=None)
             _, num_outputs, num_rows = update_task_output_stats(
                 partition_id + 1,
                 self.upstream_op_num_outputs(),
@@ -754,6 +732,10 @@ class HashShufflingOperatorBase(ContainsSubProgressBars, PhysicalOperator):
 
         for partition_id in target_partition_ids:
             self._add_single_finalize_task(partition_id, _on_bundle_ready)
+
+            # Update Finalize Metrics on task submission
+            empty_bundle = RefBundle([], owns_blocks=False)
+            finalize_metrics.on_task_submitted(partition_id, empty_bundle)
 
         # Update last finalized partition id
         self._last_finalized_partition_id = max(target_partition_ids)
