@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 import numpy as np
@@ -653,7 +653,9 @@ class _StatsManager:
             self._stats_actor_cluster_id = current_cluster_id
         return self._stats_actor_handle
 
-    def _start_thread_if_not_running(self):
+    def _start_thread_if_not_running(
+        self, on_updated_stats_callback: Optional[Callable[[], None]] = None
+    ):
         # Start background update thread if not running.
         with self._update_thread_lock:
             if self._update_thread is None or not self._update_thread.is_alive():
@@ -680,6 +682,8 @@ class _StatsManager:
                                         self._last_iteration_stats.values()
                                     ),
                                 )
+                                if on_updated_stats_callback:
+                                    on_updated_stats_callback()
                                 iter_stats_inactivity = 0
                             except Exception:
                                 logger.debug(
@@ -736,15 +740,21 @@ class _StatsManager:
         state: Dict[str, Any],
         force_update: bool = False,
     ):
+        def on_updated_stats_callback():
+            for metric in op_metrics:
+                metric.on_updated_execution_metrics()
+                # TODO: add iteration metrics callback
+
         op_metrics_dicts = [metric.as_dict() for metric in op_metrics]
         per_node_metrics = self._aggregate_per_node_metrics(op_metrics)
         args = (dataset_tag, op_metrics_dicts, operator_tags, state, per_node_metrics)
         if force_update:
             self._stats_actor().update_execution_metrics.remote(*args)
+            on_updated_stats_callback()
         else:
             with self._stats_lock:
                 self._last_execution_stats[dataset_tag] = args
-            self._start_thread_if_not_running()
+            self._start_thread_if_not_running(on_updated_stats_callback)
 
     def clear_last_execution_stats(self, dataset_tag: str):
         # After dataset completes execution, remove cached execution stats.
