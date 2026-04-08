@@ -11,13 +11,6 @@ from ray.data.tests.conftest import (
 from ray.tests.conftest import *  # noqa
 
 
-def _assert_num_blocks(ds, expected, tolerance=0.5):
-    actual = ds.num_blocks()
-    assert (
-        expected * (1 - tolerance) <= actual <= expected * (1 + tolerance)
-    ), f"Expected ~{expected} blocks (±{tolerance*100}%), got {actual}"
-
-
 def test_map(shutdown_only, restore_data_context):
     ray.init(
         _system_config={
@@ -31,10 +24,18 @@ def test_map(shutdown_only, restore_data_context):
     ctx.target_min_block_size = 10_000 * 8
     ctx.target_max_block_size = 10_000 * 8
     num_blocks_expected = 10
+    last_snapshot = get_initial_core_execution_metrics_snapshot()
 
     # Test read.
     ds = ray.data.range(100_000, override_num_blocks=1).materialize()
-    _assert_num_blocks(ds, num_blocks_expected)
+    assert (
+        num_blocks_expected <= ds._plan.initial_num_blocks() <= num_blocks_expected + 1
+    )
+    last_snapshot = assert_blocks_expected_in_plasma(
+        last_snapshot,
+        num_blocks_expected,
+        block_size_expected=ctx.target_max_block_size,
+    )
 
     # Test read -> map.
     # NOTE(swang): For some reason BlockBuilder's estimated memory usage when a
@@ -44,7 +45,16 @@ def test_map(shutdown_only, restore_data_context):
         .map(lambda row: row)
         .materialize()
     )
-    _assert_num_blocks(ds, num_blocks_expected * 2)
+    assert (
+        num_blocks_expected * 2
+        <= ds._plan.initial_num_blocks()
+        <= num_blocks_expected * 2 + 1
+    )
+    last_snapshot = assert_blocks_expected_in_plasma(
+        last_snapshot,
+        num_blocks_expected * 2,
+        block_size_expected=ctx.target_max_block_size // 2,
+    )
 
     # Test adjusted block size.
     ctx.target_max_block_size *= 2
@@ -52,7 +62,14 @@ def test_map(shutdown_only, restore_data_context):
 
     # Test read.
     ds = ray.data.range(100_000, override_num_blocks=1).materialize()
-    _assert_num_blocks(ds, num_blocks_expected)
+    assert (
+        num_blocks_expected <= ds._plan.initial_num_blocks() <= num_blocks_expected + 1
+    )
+    last_snapshot = assert_blocks_expected_in_plasma(
+        last_snapshot,
+        num_blocks_expected,
+        block_size_expected=ctx.target_max_block_size,
+    )
 
     # Test read -> map.
     ds = (
@@ -60,7 +77,16 @@ def test_map(shutdown_only, restore_data_context):
         .map(lambda row: row)
         .materialize()
     )
-    _assert_num_blocks(ds, num_blocks_expected * 2)
+    assert (
+        num_blocks_expected * 2
+        <= ds._plan.initial_num_blocks()
+        <= num_blocks_expected * 2 + 1
+    )
+    last_snapshot = assert_blocks_expected_in_plasma(
+        last_snapshot,
+        num_blocks_expected * 2,
+        block_size_expected=ctx.target_max_block_size // 2,
+    )
 
     # Setting the shuffle block size prints a warning and actually resets
     # target_max_block_size
@@ -69,7 +95,14 @@ def test_map(shutdown_only, restore_data_context):
 
     # Test read.
     ds = ray.data.range(100_000, override_num_blocks=1).materialize()
-    _assert_num_blocks(ds, num_blocks_expected)
+    assert (
+        num_blocks_expected <= ds._plan.initial_num_blocks() <= num_blocks_expected + 1
+    )
+    last_snapshot = assert_blocks_expected_in_plasma(
+        last_snapshot,
+        num_blocks_expected,
+        block_size_expected=ctx.target_max_block_size,
+    )
 
     # Test read -> map.
     ds = (
@@ -77,7 +110,19 @@ def test_map(shutdown_only, restore_data_context):
         .map(lambda row: row)
         .materialize()
     )
-    _assert_num_blocks(ds, num_blocks_expected * 2)
+
+    # NOTE: `initial_num_blocks` is based on estimate, hence we bake in 50% margin
+    assert (
+        num_blocks_expected * 2
+        <= ds._plan.initial_num_blocks()
+        <= num_blocks_expected * 3
+    )
+
+    last_snapshot = assert_blocks_expected_in_plasma(
+        last_snapshot,
+        num_blocks_expected * 2,
+        block_size_expected=ctx.target_max_block_size // 2,
+    )
 
 
 # TODO: Test that map stage output blocks are the correct size for groupby and
